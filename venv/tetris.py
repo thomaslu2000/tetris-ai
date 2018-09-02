@@ -35,9 +35,18 @@ def draw_grid():
 def move_blocks(dx, dy):
     new_place = np.add(falling_blocks, [dx, dy])
     if is_legal_place(new_place):
+        block_pos[0] += dx
+        block_pos[1] += dy
         for i in range(4):
             falling_blocks[i] = new_place[i]
         return True
+
+
+def rotate_blocks():
+    dis_from_center = np.subtract(block_pos, falling_blocks)
+    for i in range(len(falling_blocks)):
+        falling_blocks[i] = np.add(block_pos, [dis_from_center[i][1], -dis_from_center[i][0]])
+    update()
 
 
 def is_legal_place(locs):
@@ -54,8 +63,16 @@ def add_to_board(locs):
 
 def new_falling_blocks():
     block = possible_block_locs[np.random.randint(7)]
+    if board[4, 0]:
+        game_over()
+        return
     for i in range(4):
         falling_blocks[i] = block[i]
+    block_pos[0], block_pos[1] = 4, 0
+
+
+def game_over():
+    print("You done fucked up")
 
 
 def update():
@@ -84,13 +101,14 @@ possible_block_locs = [
     [[4, -1], [4, 0], [5, 0], [5, -1]],  # Square
     [[3, 0], [4, 0], [4, -1], [5, -1]],  # S
     [[3, 0], [4, 0], [4, -1], [5, 0]],  # T
-    [[4, -1], [5, -1], [5, 0], [6, 0]],  # Other S
+    [[3, -1], [4, -1], [4, 0], [5, 0]],  # Other S
     [[3, 0], [4, 0], [5, 0], [6, 0]]  # Line
 ]
 
 grid_surface = pygame.Surface((401, 881))
 
 falling_blocks = 4*[[0,0]]
+block_pos = [4, 0]
 new_falling_blocks()
 
 pygame.init()
@@ -116,5 +134,8 @@ while running:
     if pressed[pygame.K_DOWN]:
         gravity()
     for event in pygame.event.get():
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP:
+                rotate_blocks()
         if event.type == pygame.QUIT:
             running = False
