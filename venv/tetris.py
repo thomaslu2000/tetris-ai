@@ -3,8 +3,8 @@ import pygame
 
 width, height = 800, 1000
 
-# Tetris board is 22 down and 10 across, but we must make it reversed so we can do x, y instead of y, x
-board_dims = [10, 22]
+# Tetris board is 22 down and 10 across
+board_dims = [22, 10]
 
 
 def clear_screen():
@@ -17,18 +17,18 @@ def print_board():
 
 
 def draw_squares():
-    for x in range(10):
-        for y in range(22):
-            if board[x, y]:
+    for x in range(board_dims[1]):
+        for y in range(board_dims[0]):
+            if board[y, x]:
                 pygame.draw.rect(grid_surface, BLUE, blue_rect.move(x*40, y*40))
     for block in falling_blocks:
-        pygame.draw.rect(grid_surface, BLUE, blue_rect.move(*np.multiply(40, block)))
+        pygame.draw.rect(grid_surface, BLUE, blue_rect.move(40 * block[1], 40 * block[0]))
 
 
 def draw_grid():
-    for i in range(23):
+    for i in range(board_dims[0] + 1):
         pygame.draw.line(grid_surface, GRAY, (0, i * 40), (400, i * 40), 5)
-    for i in range(11):
+    for i in range(board_dims[1] + 1):
         pygame.draw.line(grid_surface, GRAY, (i * 40, 0), (i * 40, 880), 5)
 
 
@@ -43,15 +43,16 @@ def move_blocks(dx, dy):
 
 
 def rotate_blocks():
-    dis_from_center = np.subtract(block_pos, falling_blocks)
-    for i in range(len(falling_blocks)):
-        falling_blocks[i] = np.add(block_pos, [dis_from_center[i][1], -dis_from_center[i][0]])
-    update()
+    new_block_locs = [np.add(block_pos, [-block[1], block[0]]) for block in np.subtract(block_pos, falling_blocks)]
+    if is_legal_place(new_block_locs):
+        for i in range(len(falling_blocks)):
+            falling_blocks[i] = new_block_locs[i]
+        update()
 
 
 def is_legal_place(locs):
     for loc in locs:
-        if np.greater_equal(loc, [10, 22]).any() or np.less(loc, [0, 0]).any() or board[tuple(loc)]:
+        if np.greater_equal(loc, board_dims).any() or np.less(loc, [0, 0]).any() or board[tuple(loc)]:
             return False
     return True
 
@@ -63,16 +64,26 @@ def add_to_board(locs):
 
 def new_falling_blocks():
     block = possible_block_locs[np.random.randint(7)]
-    if board[4, 0]:
-        game_over()
-        return
     for i in range(4):
         falling_blocks[i] = block[i]
-    block_pos[0], block_pos[1] = 4, 0
+    block_pos[0], block_pos[1] = 0, 4
+
+
+def block_has_settled():
+    for row_i in range(len(board)):
+        if all(board[row_i]):
+            for replaced_row in range(row_i, 0, -1):
+                board[replaced_row] = board[replaced_row-1]
+            board[0] = [0]*board_dims[1]
+    if board[0, 4]:
+        game_over()
+        return
+    new_falling_blocks()
 
 
 def game_over():
-    print("You done fucked up")
+    game_ended[0] = True
+    update()
 
 
 def update():
@@ -80,37 +91,41 @@ def update():
     draw_squares()
     draw_grid()
     screen.blit(grid_surface, (40, 40))
+    if game_ended[0]:
+        screen.blit(font.render("GAME OVER", 1, (255, 255, 255)), (100, 100))
     pygame.display.update()
 
 
 def gravity():
-    if not move_blocks(0, 1):
+    if not move_blocks(1, 0):
         add_to_board(falling_blocks)
-        new_falling_blocks()
+        block_has_settled()
     update()
 
 
+pygame.font.init()
+game_ended = [False]
+font = pygame.font.SysFont("normal", 40)
 BLUE = (0, 0, 255)
 GRAY = (100, 100, 100)
 clock = pygame.time.Clock()
 blue_rect = pygame.Rect(0, 0, 40, 40)
 board = np.zeros(board_dims, dtype=bool)
 possible_block_locs = [
-    [[4, -1], [4, 0], [5, 0], [6, 0]],  # backwards L
-    [[3, 0], [4, 0], [5, 0], [5, -1]],  # L
-    [[4, -1], [4, 0], [5, 0], [5, -1]],  # Square
-    [[3, 0], [4, 0], [4, -1], [5, -1]],  # S
-    [[3, 0], [4, 0], [4, -1], [5, 0]],  # T
-    [[3, -1], [4, -1], [4, 0], [5, 0]],  # Other S
-    [[3, 0], [4, 0], [5, 0], [6, 0]]  # Line
+    [[-1, 4], [0, 4], [0, 5], [0, 6]],  # backwards L
+    [[0, 3], [0, 4], [0, 5], [-1, 5]],  # L
+    [[-1, 4], [0, 4], [0, 5], [-1, 5]],  # Square
+    [[0, 3], [0, 4], [-1, 4], [-1, 5]],  # S
+    [[0, 3], [0, 4], [-1, 4], [0, 5]],  # T
+    [[-1, 3], [-1, 4], [0, 4], [0, 5]],  # Other S
+    [[0, 3], [0, 4], [0, 5], [0, 6]]  # Line
 ]
 
 grid_surface = pygame.Surface((401, 881))
 
-falling_blocks = 4*[[0,0]]
-block_pos = [4, 0]
+falling_blocks = 4*[[0, 0]]
+block_pos = [0, 4]
 new_falling_blocks()
-
 pygame.init()
 screen = pygame.display.set_mode((width, height))
 
@@ -120,22 +135,23 @@ running = True
 falling_time = 0
 while running:
     clock.tick(20)
-    falling_time += 1
-    if falling_time == 20:
-        gravity()
-        falling_time = 0
-    pressed = pygame.key.get_pressed()
-    if pressed[pygame.K_LEFT]:
-        move_blocks(-1, 0)
-        update()
-    if pressed[pygame.K_RIGHT]:
-        move_blocks(1, 0)
-        update()
-    if pressed[pygame.K_DOWN]:
-        gravity()
-    for event in pygame.event.get():
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_UP:
-                rotate_blocks()
-        if event.type == pygame.QUIT:
-            running = False
+    if not game_ended[0]:
+        falling_time += 1
+        if falling_time == 20:
+            gravity()
+            falling_time = 0
+        pressed = pygame.key.get_pressed()
+        if pressed[pygame.K_LEFT]:
+            move_blocks(0, -1)
+            update()
+        if pressed[pygame.K_RIGHT]:
+            move_blocks(0, 1)
+            update()
+        if pressed[pygame.K_DOWN]:
+            gravity()
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP:
+                    rotate_blocks()
+            if event.type == pygame.QUIT:
+                running = False
