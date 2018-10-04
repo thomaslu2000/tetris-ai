@@ -1,2 +1,0 @@
-model_checkpoint_path: "/home/thomas/PycharmProjects/tetris-ai/tetModel.ckpt"
-all_model_checkpoint_paths: "/home/thomas/PycharmProjects/tetris-ai/tetModel.ckpt"
