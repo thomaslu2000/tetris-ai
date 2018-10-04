@@ -64,6 +64,8 @@ if __name__ == "__main__":
                 pickle.dump(w2, open("oldWeights/" + str(n_input) + "-" + str(n_hidden1)
                                      + "-" + str(s) + "-w2.p", "wb"))
                 print("\n Saved! \n")
+                
+        if i % 50 == 0:
             pickle.dump(w1, open("w1.p", "wb"))
             pickle.dump(b1, open("b1.p", "wb"))
             pickle.dump(w2, open("w2.p", "wb"))
