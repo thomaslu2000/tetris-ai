@@ -1,27 +1,22 @@
 import numpy as np
 import pygame
 from data import *
-import pickle
-hand_train_mode = False
 AI_mode = True
+external_ai = False
 
+if __name__ != "__main__":
+    AI_mode = False
+    external_ai = True
+
+judge_fn = None
 if AI_mode:
-    hand_train_mode = False
-    import tensorflow as tf
-    from train import pred, x, model_path
+    from EvolutionaryAI import get_judge_fn
+    judge_fn = get_judge_fn()
 
 width, height = 800, 1000
 
 # Tetris board is 22 down and 10 across
 board_dims = [22, 10]
-
-if hand_train_mode:
-    AI_mode = False
-    try:
-        hand_trained_models = pickle.load(open("hand_trained.p", "rb"))
-    except FileNotFoundError:
-        hand_trained_models = []
-        pickle.dump(hand_trained_models, open("hand_trained.p", "wb"))
 
 
 def clear_screen():
@@ -93,25 +88,21 @@ def new_falling_blocks():
         places.append(orientation)
 
 
-def num_of_block_rots():
-    return 1 << (2 + block_type[0]) // 3
-
-
 def block_has_settled():
     tet_ai[0] = None
-    if hand_train_mode:
-        global hand_trained_models
-        hand_trained_models += [get_relevant_board(falling_blocks)]  # save the models
+    global score
+    score += 1
     for row_i in range(len(board)):
         if all(board[row_i]):
+            score += 5
             for replaced_row in range(row_i, 0, -1):
                 board[replaced_row] = board[replaced_row-1]
             board[0] = [0]*board_dims[1]
-    if board[block_origin]:
+    new_falling_blocks()
+    if any(board[0]) or sum([len(ori) for ori in places]) == 0:
         game_over()
         return
-    new_falling_blocks()
-    if AI_mode:
+    if external_ai or AI_mode:
         tet_ai[0] = get_new_ai()
 
 
@@ -120,20 +111,24 @@ def game_over():
     update()
 
 
+def get_score():
+    return score
+
+
 def update():
-    clear_screen()
-    draw_squares()
-    draw_grid()
-    screen.blit(grid_surface, (40, 40))
-    if game_ended[0]:
-        screen.blit(font.render("GAME OVER", 1, (255, 255, 255)), (100, 100))
-    pygame.display.update()
+    if show_display:
+        clear_screen()
+        draw_squares()
+        draw_grid()
+        screen.blit(grid_surface, (40, 40))
+        if game_ended[0]:
+            screen.blit(font.render("GAME PAUSED" if paused else "GAME OVER", 1, (255, 255, 255)), (100, 100))
+        pygame.display.update()
 
 
 def gravity():
     if not move_blocks(1, 0):
         add_to_board(falling_blocks)
-        block_has_settled()
         return True
     update()
     return False
@@ -195,15 +190,21 @@ def get_possible_places():
     return all_places
 
 
-def gen_ai(ori=None, place=0):  # rotate
+def gen_ai(ori=None, place=None):
     if ori is None:
         place, ori = place_counter
-    first_loc, end_loc = np.subtract(reachable(places[ori][place]),
-                                     offsets[block_type[0]][ori])
+    offset = offsets[block_type[0]][ori]
+    end_blocks = places[ori][place]
+    first_loc, end_loc = np.subtract(reachable(end_blocks), offset)
     under = False
     if first_loc is not end_loc:
         under = True
     move = move_right if end_loc[1] > first_loc[1] else move_left
+    if __name__ != "__main__":
+        def ex_ai():
+            add_to_board(places[ori][place])
+            return True
+        return ex_ai
 
     def ai():
         b = falling_blocks[0]
@@ -224,14 +225,22 @@ def gen_ai(ori=None, place=0):  # rotate
 
 
 def get_new_ai():
-    highest_score = -9999
-    best_ori, best_place = 0, 0
+    highest_score = None
+    best_ori, best_place = None, None
     for ori in range(len(places)):
         for place in range(len(places[ori])):
-            score = sess.run(pred, feed_dict={x: np.reshape(get_relevant_projected_board(ori, place), (1, 60))})
-            if score > highest_score:
-                highest_score, best_ori, best_place = score, ori, place
+            if external_ai:
+                s = external_pred(*get_relevant_projected_board(ori, place))
+            else:
+                s = judge_fn(*get_relevant_projected_board(ori, place))
+            if highest_score is None or s >= highest_score:
+                highest_score, best_ori, best_place = s, ori, place
     return gen_ai(best_ori, best_place)
+
+
+def set_external_pred(p):
+    global external_pred
+    external_pred = p
 
 
 def get_relevant_projected_board(ori, place):
@@ -239,29 +248,78 @@ def get_relevant_projected_board(ori, place):
     blocks = places[ori][place]
     for block in blocks:
         b[block[0]][block[1]] = True
-    lowest = np.amax(blocks, axis=0)[0] + 2
-    bottom = max(6, min(22, lowest))
-    return b[bottom - 6:bottom].copy()
+    return get_relevant_board(blocks, b=b), count_holes(b)
 
 
-def get_relevant_board(blocks):  # of where the block goes, not
-    lowest = np.amax(blocks, axis=0)[0] + 2
-    if lowest < 6:
-        return [[0]*10] * (6 - lowest) + board[:lowest].copy()
-    if lowest > 22:
-        return board[lowest-6:22].copy() + [[1]*10] * lowest-22
-    bottom = max(6, min(22, lowest))
-    return board[bottom-6:bottom].copy()
+def count_holes(b):
+    total = 0
+    for x in range(board_dims[1]):
+        found_top = False
+        for y in range(board_dims[0]):
+            if found_top and not b[y][x]:
+                total += 1
+            elif not found_top and b[y][x]:
+                found_top = True
+    return total
 
 
-pygame.font.init()
+def get_relevant_board(blocks, b=None):  # of where the block goes, not
+    if b is None:
+        b = board
+    if checked_board_size == board_dims[0]:
+        return b.copy()
+    lowest = np.amax(blocks, axis=0)[0] + checked_board_size - 4
+    if lowest < checked_board_size:
+        return [[False]*board_dims[1]] * (checked_board_size - lowest) + b[:lowest].tolist()
+    if lowest > board_dims[0]:
+        return b[lowest-checked_board_size:board_dims[0]].tolist() + [[True]*board_dims[1]] * (lowest-board_dims[0])
+    return b[lowest-checked_board_size:lowest]
+
+
+def reset():
+    global score, board, running
+    score = 0
+    board = np.zeros(board_dims, dtype=bool)
+    running, game_ended[0] = True, False
+    block_has_settled()
+
+
+def set_random_seed(seed):
+    np.random.seed(seed)
+
+
+def get_running():
+    return running
+
+
+def no_player_input():
+    global falling_time
+    falling_time += 1
+    if falling_time == 20:
+        falling_time = 0
+        return gravity()
+    if tet_ai[0]:
+        return tet_ai[0]()
+    else:
+        return False
+
+
+def main_loop():
+    while running:
+        if game_ended[0]:
+            break
+        else:
+            try:
+                if no_player_input():
+                    block_has_settled()
+            except IndexError:
+                break
+
+
 game_ended = [False]
-font = pygame.font.SysFont("normal", 40)
-
-clock = pygame.time.Clock()
 blue_rect = pygame.Rect(0, 0, 40, 40)
 board = np.zeros(board_dims, dtype=bool)
-grid_surface = pygame.Surface((401, 881))
+external_pred = None
 
 falling_blocks = 4*[[0, 0]]
 block_type = [0, 0]  # first is the kind of block, second is the rotation # assuming it starts at 0
@@ -270,90 +328,93 @@ just_over_tops = []
 block_origin = (0, 3)
 block_pos = [0, 0]
 
-# TESTING
 places = []
 place_counter = [0, 0]  # first is place index, second is rotation index
 tet_ai = [None]
 
-if AI_mode:
-    saver = tf.train.Saver()
-    sess = tf.Session()
-    sess.run(tf.global_variables_initializer())
-    try:
-        load_path = saver.restore(sess, model_path)
-        print("restored")
-    except ValueError:
-        pass
-
-# new_falling_blocks()
-block_has_settled()  # init method
-pygame.init()
-screen = pygame.display.set_mode((width, height))
-
-update()
-
-
-running = True
-
+score = 0
 falling_time = 0
-while running:
-    clock.tick(20)
-    if game_ended[0]:
-        for event in pygame.event.get():
-            if event.type == pygame.KEYDOWN:
-                orientation_length = len(places[place_counter[1]])
-                if event.key == pygame.K_RIGHT:
-                    place_counter[0] = (place_counter[0] + 1) % orientation_length
-                    update()
-                if event.key == pygame.K_LEFT:
-                    place_counter[0] = (place_counter[0] - 1 + orientation_length) % orientation_length
-                    update()
-                if event.key == pygame.K_UP:
-                    place_counter[0] = 0
-                    place_counter[1] = (place_counter[1] + 1) % len(places)
-                    update()
-                if event.key == pygame.K_SPACE:
-                    game_ended[0] = False
-                    place_counter[0] = 0
-                    place_counter[1] = 0
-                    gravity()
-                if event.key == pygame.K_DOWN:
-                    tet_ai = [gen_ai()]
-                    game_ended[0] = False
-            if event.type == pygame.QUIT:
-                running = False
-    else:
-        falling_time += 1
-        if falling_time == 20:
-            gravity()
-            falling_time = 0
-        if tet_ai[0]:
-            tet_ai[0]()
+
+# unsupervised data
+show_display = False
+
+if __name__ == "__main__":
+    # normal game data
+    show_display = True
+
+    paused = False
+    np.random.seed(1)
+    block_has_settled()  # init method
+
+    pygame.font.init()
+    font = pygame.font.SysFont("normal", 40)
+
+    clock = pygame.time.Clock()
+    grid_surface = pygame.Surface((401, 881))
+
+    pygame.init()
+    screen = pygame.display.set_mode((width, height))
+
+    update()
+
+    running = True
+
+    while running:
+        clock.tick(20)
+        if game_ended[0]:
+            # running = False
             for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN:
+                    orientation_length = len(places[place_counter[1]])
+                    if event.key == pygame.K_RIGHT:
+                        place_counter[0] = (place_counter[0] + 1) % orientation_length
+                        update()
+                    if event.key == pygame.K_LEFT:
+                        place_counter[0] = (place_counter[0] - 1 + orientation_length) % orientation_length
+                        update()
+                    if event.key == pygame.K_UP:
+                        place_counter[0] = 0
+                        place_counter[1] = (place_counter[1] + 1) % len(places)
+                        update()
+                    if event.key == pygame.K_SPACE:
+                        game_ended[0] = False
+                        paused = False
+                        place_counter[0] = 0
+                        place_counter[1] = 0
+                        gravity()
+                    if event.key == pygame.K_DOWN:
+                        tet_ai = [gen_ai()]
+                        game_ended[0] = False
+                        paused = False
+                    if event.key == pygame.K_r:
+                        reset()
                 if event.type == pygame.QUIT:
                     running = False
         else:
-            pressed = pygame.key.get_pressed()
-            if pressed[pygame.K_LEFT]:
-                move_left()
-            if pressed[pygame.K_RIGHT]:
-                move_right()
-            if pressed[pygame.K_DOWN]:
-                gravity()
-            for event in pygame.event.get():
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_UP:
-                        rotate_blocks()
-                    if event.key == pygame.K_SPACE:
-                        game_ended[0] = True
-                        place_counter[0] = 0
-                        place_counter[1] = 0
-                        update()
-                    if hand_train_mode and event.key == pygame.K_s:
-                        pickle.dump(hand_trained_models, open("hand_trained.p", "wb"))
-                        print("Saved!")
-                if event.type == pygame.QUIT:
-                    running = False
-
-if AI_mode:
-    sess.close()
+            if no_player_input():
+                block_has_settled()
+            if tet_ai[0]:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        running = False
+            else:
+                pressed = pygame.key.get_pressed()
+                if pressed[pygame.K_LEFT]:
+                    move_left()
+                if pressed[pygame.K_RIGHT]:
+                    move_right()
+                if pressed[pygame.K_DOWN]:
+                    if gravity():
+                        block_has_settled()
+                for event in pygame.event.get():
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_UP:
+                            rotate_blocks()
+                        if event.key == pygame.K_SPACE:
+                            game_ended[0] = True
+                            paused = True
+                            place_counter[0] = 0
+                            place_counter[1] = 0
+                            update()
+                    if event.type == pygame.QUIT:
+                        running = False

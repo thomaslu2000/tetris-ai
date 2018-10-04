@@ -1,6 +1,12 @@
+import numpy as np
+from math import exp, log, inf
+
 BLUE = (0, 0, 255)
 GRAY = (100, 100, 100)
 RED = (255, 0, 0)
+
+checked_board_size = 8
+
 rotated_orientations = [
     # 0, O block
     [[[0, 0], [0, 1], [-1, 0], [-1, 1]]],
@@ -77,9 +83,3 @@ offsets = [
     ]
 
 ]
-
-
-def get_relevant_board(board, block_locs):  # of where the block goes, not
-    lowest = np.amax(block_locs, axis=0)[0]
-
-    return board
